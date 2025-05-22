@@ -1,4 +1,3 @@
-// backend/server.js
 require('dotenv').config();
 
 const express = require('express');
@@ -8,47 +7,60 @@ const path = require('path');
 const { Server } = require("socket.io"); // Import Server class from socket.io
 const initializeSocketIO = require('./socket/socketHandler');
 const db = require('./database/db');
-// const { protect, authorize } = require('./middleware/authMiddleware'); // Not directly used by socket.io handlers, but JWT can be used for socket auth
 
 const app = express();
 const server = http.createServer(app); // Create an HTTP server with the Express app
 
+// Configure CORS options for Socket.IO
+const socketIoCorsOptions = {
+	origin: process.env.FRONTEND_URL || "*", // Use an env variable for frontend URL, fallback to '*' for dev
+	methods: ["GET", "POST"]
+};
+
 // Configure Socket.IO
 const io = new Server(server, {
-	cors: {
-		origin: "*", // Your React frontend URL
-		methods: ["GET", "POST"]
-	}
+	cors: socketIoCorsOptions
 });
-app.use(express.static(path.join(__dirname, 'public/react-app')));
 
 const PORT = process.env.PORT || 5001;
 
 // Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Configure CORS options for Express API
+const expressCorsOptions = {
+	origin: process.env.FRONTEND_URL || "*", // Allow requests from your frontend
+	optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
+};
+app.use(cors(expressCorsOptions)); // Apply CORS for API routes
+
+app.use(express.json()); // To parse JSON bodies
+app.use(express.urlencoded({ extended: true })); // To parse URL-encoded bodies
+
+// Serve static uploaded files
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
-// Simple Test Route
-app.get('/api', (req, res) => {
-	res.json({ message: "Welcome to the AOSHA Backend API!" });
-});
+// Serve static frontend application files (from the build process)
+app.use(express.static(path.join(__dirname, 'public/react-app')));
+
 
 // --- API Routes ---
+// Simple Test Route (good for health checks)
+app.get('/api/health', (req, res) => {
+	res.json({ message: "AOSHA Backend API is healthy!", timestamp: new Date().toISOString() });
+});
+
 const authRoutes = require('./routes/authRoutes');
 app.use('/api/auth', authRoutes);
 
 const characterRoutes = require('./routes/characterRoutes');
 app.use('/api/characters', characterRoutes);
 
-const storyRoutes = require('./routes/storyRoutes'); // Require the story routes
+const storyRoutes = require('./routes/storyRoutes');
 app.use('/api/story', storyRoutes);
 
-const sessionLogRoutes = require('./routes/sessionLogRoutes'); // Require session log routes
+const sessionLogRoutes = require('./routes/sessionLogRoutes');
 app.use('/api/sessions', sessionLogRoutes);
 
-const npcRoutes = require('./routes/npcRoutes'); // Require NPC routes
+const npcRoutes = require('./routes/npcRoutes');
 app.use('/api/npcs', npcRoutes);
 
 const assetRoutes = require('./routes/assetRoutes');
@@ -63,28 +75,39 @@ app.use('/api/locations', locationRoutes);
 const mapRoutes = require('./routes/mapRoutes');
 app.use('/api/maps', mapRoutes);
 
+// --- Socket.IO Initialization ---
+initializeSocketIO(io); // Initialize your custom socket handling logic
 
-initializeSocketIO(io);
+// --- Catch-all route for client-side routing ---
+// This MUST be AFTER all API routes
+app.get('*', (req, res) => {
+	res.sendFile(path.join(__dirname, 'public/react-app/index.html'));
+});
 
-// Basic Error Handler
+// --- Basic Error Handler ---
+// This should ideally be the last middleware, after routes and before server.listen
 app.use((err, req, res, next) => {
-	console.error(err.stack);
-	res.status(500).send({ error: 'Something broke!' });
+	console.error("Unhandled error:", err.stack);
+	// Avoid sending stack trace in production for security reasons
+	const statusCode = err.status || 500;
+	const message = process.env.NODE_ENV === 'production' ? 'An unexpected error occurred.' : err.message;
+	res.status(statusCode).send({ error: message });
 });
 
 // Initialize Database and Start Server
 db.initDb((err) => {
 	if (err) {
 		console.error("Failed to initialize database:", err);
-		process.exit(1);
+		process.exit(1); // Exit if DB fails to initialize
 	} else {
+		console.log("Database initialized successfully.");
 		// Use 'server.listen' instead of 'app.listen' for socket.io
 		server.listen(PORT, () => {
-			console.log(`AOSHA Backend server (with WebSockets) running on http://localhost:${PORT}`);
+			console.log(`AOSHA Backend server (with WebSockets) running on port ${PORT}`);
+			console.log(`Access it locally via http://localhost:${PORT}`);
+			if (process.env.NODE_ENV === 'production' && process.env.RENDER_EXTERNAL_URL) {
+				console.log(`Access it publicly via ${process.env.RENDER_EXTERNAL_URL}`);
+			}
 		});
 	}
-});
-
-app.get('*', (req, res) => {
-	res.sendFile(path.join(__dirname, 'public/react-app/index.html'));
 });
