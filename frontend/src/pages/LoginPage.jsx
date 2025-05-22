@@ -14,7 +14,7 @@ import {
 } from '@mui/material';
 
 // Path to your background image in the public folder
-const backgroundImageUrl = '../../public/aoshaproject-landing.png'; // ADJUST THIS PATH
+const backgroundImageUrl = '/aoshaproject-landing.png'; // ADJUST THIS PATH
 
 function LoginPage() {
   const [email, setEmail] = useState('');
