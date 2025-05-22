@@ -20,7 +20,7 @@ const io = new Server(server, {
 		methods: ["GET", "POST"]
 	}
 });
-app.use(express.static(path.join(__dirname, '../frontend/dist')));
+app.use(express.static(path.join(__dirname, 'public/react-app')));
 
 const PORT = process.env.PORT || 5001;
 
@@ -86,5 +86,5 @@ db.initDb((err) => {
 });
 
 app.get('*', (req, res) => {
-	res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+	res.sendFile(path.join(__dirname, 'public/react-app/index.html'));
 });
