@@ -40,7 +40,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
 // Serve static frontend application files (from the build process)
 app.use(express.static(path.join(__dirname, 'public/react-app')));
-
+//
 
 // --- API Routes ---
 // Simple Test Route (good for health checks)
@@ -78,11 +78,6 @@ app.use('/api/maps', mapRoutes);
 // --- Socket.IO Initialization ---
 initializeSocketIO(io); // Initialize your custom socket handling logic
 
-// --- Catch-all route for client-side routing ---
-// This MUST be AFTER all API routes
-app.get('*', (req, res) => {
-	res.sendFile(path.join(__dirname, 'public/react-app/index.html'));
-});
 
 // --- Basic Error Handler ---
 // This should ideally be the last middleware, after routes and before server.listen
