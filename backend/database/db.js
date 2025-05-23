@@ -6,7 +6,9 @@ const fs = require('fs'); // Import fs module
 
 // Define the mount path for Render Disk (use an environment variable for flexibility)
 // This should match the "Mount Path" you set in Render's disk settings.
-const RENDER_DISK_MOUNT_PATH = process.env.RENDER_DISK_MOUNT_PATH || '/mnt/aosha_data'; // Default for local dev if not set
+// Example for Render: /var/data/aosha_data or /mnt/aosha_data
+// For local development, if this env var is not set, it will use a path relative to this file.
+const RENDER_DISK_MOUNT_PATH = process.env.RENDER_DISK_MOUNT_PATH || path.join(__dirname, '..', 'data_persist'); // Fallback for local dev
 
 // Define the path for the database file on the persistent disk
 const DB_FILE_NAME = 'aoshaproject.sqlite';
@@ -17,10 +19,10 @@ const DB_FILE_PATH = path.join(RENDER_DISK_MOUNT_PATH, DB_FILE_NAME);
 if (!fs.existsSync(RENDER_DISK_MOUNT_PATH)) {
     try {
         fs.mkdirSync(RENDER_DISK_MOUNT_PATH, { recursive: true });
-        console.log(`Persistent storage directory created at: ${RENDER_DISK_MOUNT_PATH}`);
+        console.log(`Persistent storage directory for database created at: ${RENDER_DISK_MOUNT_PATH}`);
     } catch (dirErr) {
-        console.error(`Error creating persistent storage directory ${RENDER_DISK_MOUNT_PATH}:`, dirErr);
-        // Depending on your error handling strategy, you might want to exit or throw
+        console.error(`CRITICAL: Error creating persistent storage directory ${RENDER_DISK_MOUNT_PATH} for database:`, dirErr);
+        // Depending on your error handling strategy, you might want to exit
         process.exit(1); // Exit if we can't create the essential directory
     }
 }
@@ -28,7 +30,7 @@ if (!fs.existsSync(RENDER_DISK_MOUNT_PATH)) {
 // Create a new database instance (or open it if it exists)
 let db = new sqlite3.Database(DB_FILE_PATH, (err) => {
 	if (err) {
-		console.error("Error opening database on persistent disk:", err.message, "Path:", DB_FILE_PATH);
+		console.error("Error opening database on persistent disk:", err.message, "Attempted Path:", DB_FILE_PATH);
 	} else {
 		console.log("Successfully connected to the SQLite database on persistent disk:", DB_FILE_PATH);
 	}
@@ -45,9 +47,8 @@ const predefinedUsers = [
 	{ username: 'Iulius', email: 'iulius@aosha.com', password: 'aosha2025!', role: 'Player' },
 ];
 
-// Function to create tables if they don't exist (remains the same internally)
+// Function to create tables if they don't exist (Schema definition is unchanged)
 const createTables = (callback) => {
-	// ... (your existing createTables logic - no changes needed inside this function) ...
 	db.serialize(() => {
 		// 1. Users Table
 		db.run(`
@@ -265,7 +266,7 @@ const createTables = (callback) => {
 	}); // End db.serialize()
 };
 
-// Function to seed predefined users (remains the same)
+// Function to seed predefined users (remains the same internally)
 const seedPredefinedUsers = (callback) => {
 	// ... (your existing seedPredefinedUsers logic - no changes needed) ...
 	const insertPromises = predefinedUsers.map(user => {
@@ -306,7 +307,7 @@ const seedPredefinedUsers = (callback) => {
 		});
 };
 
-// Combined initialization function (remains the same)
+// Combined initialization function (remains the same internally)
 const initDb = (callback) => {
 	// ... (your existing initDb logic - no changes needed) ...
 	createTables((err) => {
