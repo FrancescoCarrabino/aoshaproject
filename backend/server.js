@@ -93,22 +93,6 @@ app.use('/api/maps', mapRoutes);
 initializeSocketIO(io);
 
 
-// --- SPA Catch-all for Frontend Routing ---
-// This should come AFTER all API routes and static file serving middlewares
-app.get('*', (req, res, next) => {
-  // If the request is not for an API endpoint or a known static asset path, serve index.html
-  if (!req.path.startsWith('/api/') && !req.path.startsWith('/uploads/') && !req.path.startsWith('/socket.io/')) {
-    const indexPath = path.join(frontendAppPath, 'index.html');
-    if (fs.existsSync(indexPath)) {
-        return res.sendFile(indexPath);
-    } else {
-        console.warn(`SPA Fallback: index.html not found at ${indexPath}`);
-        return res.status(404).send({ error: 'SPA index.html not found. Ensure frontend is built and served correctly.' });
-    }
-  }
-  // Otherwise, let it be handled by subsequent error handlers or Express's default 404
-  next();
-});
 
 
 // --- Centralized Error Handler ---
