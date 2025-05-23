@@ -2,20 +2,39 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const fs = require('fs'); // Import fs module
 
-// Define the path for the database file
-const DB_FILE_PATH = path.join(__dirname, 'aoshaproject.sqlite');
+// Define the mount path for Render Disk (use an environment variable for flexibility)
+// This should match the "Mount Path" you set in Render's disk settings.
+const RENDER_DISK_MOUNT_PATH = process.env.RENDER_DISK_MOUNT_PATH || '/mnt/aosha_data'; // Default for local dev if not set
+
+// Define the path for the database file on the persistent disk
+const DB_FILE_NAME = 'aoshaproject.sqlite';
+const DB_FILE_PATH = path.join(RENDER_DISK_MOUNT_PATH, DB_FILE_NAME);
+
+// Ensure the directory for the database file exists on the disk
+// This is important because the disk might be empty initially.
+if (!fs.existsSync(RENDER_DISK_MOUNT_PATH)) {
+    try {
+        fs.mkdirSync(RENDER_DISK_MOUNT_PATH, { recursive: true });
+        console.log(`Persistent storage directory created at: ${RENDER_DISK_MOUNT_PATH}`);
+    } catch (dirErr) {
+        console.error(`Error creating persistent storage directory ${RENDER_DISK_MOUNT_PATH}:`, dirErr);
+        // Depending on your error handling strategy, you might want to exit or throw
+        process.exit(1); // Exit if we can't create the essential directory
+    }
+}
 
 // Create a new database instance (or open it if it exists)
 let db = new sqlite3.Database(DB_FILE_PATH, (err) => {
 	if (err) {
-		console.error("Error opening database:", err.message);
+		console.error("Error opening database on persistent disk:", err.message, "Path:", DB_FILE_PATH);
 	} else {
-		console.log("Successfully connected to the SQLite database:", DB_FILE_PATH);
+		console.log("Successfully connected to the SQLite database on persistent disk:", DB_FILE_PATH);
 	}
 });
 
-// Define the predefined users
+// Define the predefined users (remains the same)
 const predefinedUsers = [
 	{ username: 'DungeonMaster', email: 'dm@aosha.com', password: 'aosha2025!', role: 'DM' },
 	{ username: 'Liferos', email: 'liferos@aosha.com', password: 'aosha2025!', role: 'Player' },
@@ -26,8 +45,9 @@ const predefinedUsers = [
 	{ username: 'Iulius', email: 'iulius@aosha.com', password: 'aosha2025!', role: 'Player' },
 ];
 
-// Function to create tables if they don't exist
+// Function to create tables if they don't exist (remains the same internally)
 const createTables = (callback) => {
+	// ... (your existing createTables logic - no changes needed inside this function) ...
 	db.serialize(() => {
 		// 1. Users Table
 		db.run(`
@@ -243,10 +263,11 @@ const createTables = (callback) => {
 			}); // End Character Sheets Table
 		}); // End Users Table
 	}); // End db.serialize()
-}; // End createTables
+};
 
-// Function to seed predefined users
+// Function to seed predefined users (remains the same)
 const seedPredefinedUsers = (callback) => {
+	// ... (your existing seedPredefinedUsers logic - no changes needed) ...
 	const insertPromises = predefinedUsers.map(user => {
 		return new Promise((resolve, reject) => {
 			db.get("SELECT id FROM users WHERE email = ?", [user.email], async (err, row) => {
@@ -285,8 +306,9 @@ const seedPredefinedUsers = (callback) => {
 		});
 };
 
-// Combined initialization function
+// Combined initialization function (remains the same)
 const initDb = (callback) => {
+	// ... (your existing initDb logic - no changes needed) ...
 	createTables((err) => {
 		if (err) {
 			console.error("Database table creation failed:", err);
