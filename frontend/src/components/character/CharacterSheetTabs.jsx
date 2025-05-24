@@ -1,6 +1,6 @@
 // src/components/character/CharacterSheetTabs.jsx
 import React, { useState } from 'react';
-import { Tabs, Tab, Box, Typography } from '@mui/material';
+import { Tabs, Tab, Box, Typography } from '@mui/material'; // Typography might not be used directly here
 import CoreInfoSection from './sections/CoreInfoSection';
 import AbilitiesSection from './sections/AbilitiesSection';
 import SkillsSection from './sections/SkillsSection';
@@ -39,7 +39,7 @@ function a11yProps(index) {
 
 function CharacterSheetTabs({
   character,
-  handlers,
+  handlers, // This is the main object from CharacterSheet.jsx
   derivedValues,
   newlyAddedSpellId,
   onClearNewlyAddedSpellId
@@ -60,8 +60,14 @@ function CharacterSheetTabs({
       </Box>
 
       <TabPanel value={activeTabValue} index={0}>
-        <> {/* <--- ADD FRAGMENT HERE */}
-          <CoreInfoSection character={character} handlers={handlers} derivedValues={derivedValues} />
+        <>
+          <CoreInfoSection
+            character={character}
+            // Pass the specific handlers CoreInfoSection expects:
+            onInputChange={handlers.handleInputChange}
+            handlers={{ handleClassChange: handlers.handleClassChange }} // Pass only 'handleClassChange' within 'handlers' prop
+            derivedValues={derivedValues}
+          />
           <AbilitiesSection
             abilityScores={character.abilityScores}
             abilityModifiers={derivedValues.abilityModifiers}
@@ -79,15 +85,15 @@ function CharacterSheetTabs({
             skillMiscModifiers={character.skillMiscModifiers}
             onSkillMiscModifierChange={handlers.handleSkillMiscModifierChange}
           />
-        </> {/* <--- END FRAGMENT HERE */}
+        </>
       </TabPanel>
 
       <TabPanel value={activeTabValue} index={1}>
-        <> {/* <--- ADD FRAGMENT HERE */}
+        <>
           <CombatStatsSection
             character={character}
             initiative={derivedValues.initiative}
-            onInputChange={handlers.handleInputChange}
+            onInputChange={handlers.handleInputChange} // This component expects onInputChange directly
             onDeathSaveChange={handlers.handleDeathSaveChange}
           />
           <AttacksSection
@@ -100,39 +106,37 @@ function CharacterSheetTabs({
             currency={character.currency}
             equipmentList={character.equipmentList}
             onCurrencyChange={handlers.handleCurrencyChange}
-            onInputChange={handlers.handleInputChange}
+            onInputChange={handlers.handleInputChange} // This component expects onInputChange directly
           />
-        </> {/* <--- END FRAGMENT HERE */}
+        </>
       </TabPanel>
 
       <TabPanel value={activeTabValue} index={2}>
-        {/* This one already had a single child, so it's fine, but adding fragment for consistency is okay */}
         <>
           <CharacterDetailsSection
             character={character}
-            onInputChange={handlers.handleInputChange}
+            onInputChange={handlers.handleInputChange} // This component expects onInputChange directly
           />
         </>
       </TabPanel>
 
       <TabPanel value={activeTabValue} index={3}>
-        <> {/* <--- ADD FRAGMENT HERE (if SpellsSection could potentially have siblings later) */}
+        <>
           <SpellsSection
             spellcastingData={character.spellcasting}
             spellSaveDC={derivedValues.spellSaveDC}
             spellAttackBonus={derivedValues.spellAttackBonus}
-            handlers={handlers}
+            handlers={handlers} // SpellsSection might expect the full 'handlers' object
             newlyAddedSpellId={newlyAddedSpellId}
             onClearNewlyAddedSpellId={onClearNewlyAddedSpellId}
           />
-        </> {/* <--- END FRAGMENT HERE */}
+        </>
       </TabPanel>
       <TabPanel value={activeTabValue} index={4}>
         <InventorySection
           inventoryItems={character.inventoryItems}
-          carryingCapacity={character.carryingCapacity} // This now includes currentWeight
-          handlers={handlers} // Pass all handlers; InventorySection will use what it needs
-        // derivedValues={derivedValues} // Pass if InventorySection needs other derived values directly
+          carryingCapacity={character.carryingCapacity}
+          handlers={handlers} // InventorySection might expect the full 'handlers' object
         />
       </TabPanel>
     </Box>
