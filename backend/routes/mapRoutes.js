@@ -37,6 +37,8 @@ const dbAll = (sql, params = []) => {
 	return new Promise((resolve, reject) => {
 		db.all(sql, params, (err, rows) => {
 			if (err) {
+				// The error you saw was logged here:
+				// DB All Error: SQLITE_ERROR: no such table: map_pins SQL: SELECT * FROM map_pins WHERE map_id = ? ORDER BY created_at ASC Params: [ '2' ]
 				console.error('DB All Error:', err.message, 'SQL:', sql, 'Params:', params);
 				reject(err);
 			} else {
@@ -53,8 +55,6 @@ router.post('/', protect, authorize('DM'), async (req, res) => {
 	const {
 		name, map_asset_id,
 		grid_enabled = false, grid_size_pixels = 50,
-		// Assuming you add these to your schema if desired based on previous discussion
-		// grid_offset_x = 0, grid_offset_y = 0, grid_color = 'rgba(0,0,0,0.5)',
 		tags = [] // Expects an array of tag names
 	} = req.body;
 	const dm_id = req.user.id;
@@ -69,7 +69,6 @@ router.post('/', protect, authorize('DM'), async (req, res) => {
 	try {
 		console.log(`[POST /api/maps] User ${dm_id} creating map. Name: ${name}, Asset ID: ${map_asset_id}`);
 
-		// 1. Verify asset exists and get its filepath
 		const asset = await dbGet("SELECT id, filepath FROM assets WHERE id = ?", [map_asset_id]);
 		if (!asset) {
 			console.log(`[POST /api/maps] Asset ID ${map_asset_id} not found.`);
@@ -77,40 +76,34 @@ router.post('/', protect, authorize('DM'), async (req, res) => {
 		}
 		console.log(`[POST /api/maps] Asset ${map_asset_id} verified. Filepath: ${asset.filepath}`);
 
-		// 2. Insert into game_maps
-		// Adapt SQL if you added grid_offset_x, grid_offset_y, grid_color
 		const gameMapSql = `
             INSERT INTO game_maps (name, map_asset_id, grid_enabled, grid_size_pixels, dm_id)
             VALUES (?, ?, ?, ?, ?)
         `;
 		const result = await dbRun(gameMapSql, [
-			name.trim(), map_asset_id, Number(grid_enabled), // Ensure grid_enabled is 0 or 1
-			grid_size_pixels, // Add other grid params if schema was updated
+			name.trim(), map_asset_id, Number(grid_enabled),
+			grid_size_pixels,
 			dm_id
 		]);
 		const newMapId = result.lastID;
 		console.log(`[POST /api/maps] Map record created with ID: ${newMapId}`);
 
-		// 3. Create initial fog data (empty array for revealed areas)
 		await dbRun("INSERT INTO map_fog_data (map_id, fog_data_json) VALUES (?, ?)", [newMapId, JSON.stringify([])]);
 		console.log(`[POST /api/maps] Initial fog data created for map ID: ${newMapId}`);
 
-		// 4. Handle Tags
 		let assignedTags = [];
 		if (Array.isArray(tags) && tags.length > 0) {
-			const tagIds = await getOrCreateTagIds(db, tags); // getOrCreateTagIds should return an array of IDs
+			const tagIds = await getOrCreateTagIds(db, tags);
 			if (tagIds.length > 0) {
 				const tagPromises = tagIds.map(tagId =>
 					dbRun("INSERT INTO map_tags (map_id, tag_id) VALUES (?, ?)", [newMapId, tagId])
 				);
 				await Promise.all(tagPromises);
-				// Fetch the tag objects to return names
 				assignedTags = await dbAll(`SELECT t.id, t.name FROM tags t JOIN map_tags mt ON t.id = mt.tag_id WHERE mt.map_id = ? ORDER BY t.name ASC`, [newMapId]);
 				console.log(`[POST /api/maps] Tags assigned to map ${newMapId}:`, assignedTags.map(t => t.name));
 			}
 		}
 
-		// 5. Fetch and return the fully created map object
 		const newMapData = await dbGet(
 			`SELECT gm.*, a.filepath as asset_filepath 
              FROM game_maps gm 
@@ -118,20 +111,19 @@ router.post('/', protect, authorize('DM'), async (req, res) => {
              WHERE gm.id = ?`, [newMapId]
 		);
 
-		if (!newMapData) { // Should not happen if insert succeeded
+		if (!newMapData) {
 			console.error(`[POST /api/maps] CRITICAL: Map ${newMapId} created but could not be fetched.`);
 			return res.status(500).json({ error: 'Map created but failed to retrieve details.' });
 		}
 
-		// Construct the final response object
 		const responsePayload = {
 			...newMapData,
-			mapAssetUrl: `/uploads/${newMapData.asset_filepath}`, // Construct URL
-			fog_data_json: JSON.stringify([]), // Initial state
-			pins: [], // No pins initially
+			mapAssetUrl: `/uploads/${newMapData.asset_filepath}`,
+			fog_data_json: JSON.stringify([]),
+			elements: [], // Changed from pins to elements, initializing as empty for new maps
 			tags: assignedTags
 		};
-		delete responsePayload.asset_filepath; // Clean up internal field
+		delete responsePayload.asset_filepath;
 
 		console.log(`[POST /api/maps] Map ${newMapId} creation successful. Payload:`, responsePayload);
 		res.status(201).json(responsePayload);
@@ -180,7 +172,6 @@ router.get('/', protect, authorize('DM'), async (req, res) => {
 			return res.json([]);
 		}
 
-		// Enhance maps with their tags
 		const mapsWithDetails = await Promise.all(maps.map(async (map) => {
 			const tags = await dbAll(
 				`SELECT t.id, t.name FROM tags t JOIN map_tags mt ON t.id = mt.tag_id WHERE mt.map_id = ? ORDER BY t.name ASC`,
@@ -190,11 +181,9 @@ router.get('/', protect, authorize('DM'), async (req, res) => {
 				...map,
 				mapAssetUrl: `/uploads/${map.asset_filepath}`,
 				tags: tags || [],
-				// fog_data_json and pins are not typically needed for list view, but could be added if desired
 			};
 		}));
 
-		// Clean up asset_filepath from final response objects
 		mapsWithDetails.forEach(map => delete map.asset_filepath);
 
 		console.log(`[GET /api/maps] Sending ${mapsWithDetails.length} maps with details.`);
@@ -230,18 +219,28 @@ router.get('/:mapId', protect, authorize('DM'), async (req, res) => {
 		console.log(`[GET /api/maps/${mapId}] Base map data found.`);
 
 		const fogData = await dbGet("SELECT fog_data_json FROM map_fog_data WHERE map_id = ?", [mapId]);
-		const pins = await dbAll("SELECT * FROM map_pins WHERE map_id = ? ORDER BY created_at ASC", [mapId]);
+		
+        // --- MODIFIED TO USE map_elements ---
+		const elementsRaw = await dbAll("SELECT * FROM map_elements WHERE map_id = ? ORDER BY created_at ASC", [mapId]);
+        // Parse element_data for each element
+		const elements = elementsRaw.map(el => ({
+			...el,
+			element_data: el.element_data ? JSON.parse(el.element_data) : {}
+		}));
+        // --- END MODIFICATION ---
+
 		const tags = await dbAll(
 			`SELECT t.id, t.name FROM tags t JOIN map_tags mt ON t.id = mt.tag_id WHERE mt.map_id = ? ORDER BY t.name ASC`,
 			[mapId]
 		);
-		console.log(`[GET /api/maps/${mapId}] Fog, pins (${pins.length}), and tags (${tags.length}) fetched.`);
+		
+		console.log(`[GET /api/maps/${mapId}] Fog, elements (${elements.length}), and tags (${tags.length}) fetched.`); // Updated log
 
 		const responsePayload = {
 			...mapData,
 			mapAssetUrl: `/uploads/${mapData.asset_filepath}`,
-			fog_data_json: fogData ? fogData.fog_data_json : JSON.stringify([]), // Default if no fog record
-			pins: pins || [],
+			fog_data_json: fogData ? fogData.fog_data_json : JSON.stringify([]),
+            elements: elements || [], // Changed 'pins' to 'elements'
 			tags: tags || []
 		};
 		delete responsePayload.asset_filepath;
@@ -262,33 +261,27 @@ router.put('/:mapId', protect, authorize('DM'), async (req, res) => {
 	const {
 		name, map_asset_id,
 		grid_enabled, grid_size_pixels,
-		// grid_offset_x, grid_offset_y, grid_color, // if you add them
 		tags
 	} = req.body;
 	console.log(`[PUT /api/maps/${mapId}] User ${dm_id} updating map. Body:`, req.body);
 
-	// Basic validation: ensure at least one updatable field is present (or tags)
 	if (Object.keys(req.body).length === 0) {
 		return res.status(400).json({ error: "No update data provided." });
 	}
 
 	try {
-		// Verify map exists and DM owns it
 		const existingMap = await dbGet("SELECT * FROM game_maps WHERE id = ? AND dm_id = ?", [mapId, dm_id]);
 		if (!existingMap) {
 			console.log(`[PUT /api/maps/${mapId}] Map not found or access denied for user ${dm_id}.`);
 			return res.status(404).json({ error: "Map not found or user unauthorized." });
 		}
 
-		// Begin transaction
 		await dbRun("BEGIN TRANSACTION");
 		console.log(`[PUT /api/maps/${mapId}] Transaction started.`);
 
-		// Update core game_maps fields
 		const updateFields = {};
 		if (name !== undefined) updateFields.name = name.trim();
 		if (map_asset_id !== undefined) {
-			// Verify new asset if changed
 			const asset = await dbGet("SELECT id FROM assets WHERE id = ?", [map_asset_id]);
 			if (!asset) {
 				await dbRun("ROLLBACK");
@@ -299,7 +292,6 @@ router.put('/:mapId', protect, authorize('DM'), async (req, res) => {
 		}
 		if (grid_enabled !== undefined) updateFields.grid_enabled = Number(grid_enabled);
 		if (grid_size_pixels !== undefined) updateFields.grid_size_pixels = grid_size_pixels;
-		// Add other grid fields if they are in your schema
 
 		if (Object.keys(updateFields).length > 0) {
 			const setClauses = Object.keys(updateFields).map(key => `${key} = ?`).join(', ');
@@ -308,10 +300,9 @@ router.put('/:mapId', protect, authorize('DM'), async (req, res) => {
 			console.log(`[PUT /api/maps/${mapId}] Core map fields updated.`);
 		}
 
-		// Update tags if 'tags' array is provided
 		if (tags !== undefined && Array.isArray(tags)) {
 			console.log(`[PUT /api/maps/${mapId}] Updating tags. New tags:`, tags);
-			await dbRun("DELETE FROM map_tags WHERE map_id = ?", [mapId]); // Clear existing tags
+			await dbRun("DELETE FROM map_tags WHERE map_id = ?", [mapId]);
 			if (tags.length > 0) {
 				const tagIds = await getOrCreateTagIds(db, tags);
 				if (tagIds.length > 0) {
@@ -327,9 +318,7 @@ router.put('/:mapId', protect, authorize('DM'), async (req, res) => {
 		await dbRun("COMMIT");
 		console.log(`[PUT /api/maps/${mapId}] Transaction committed.`);
 
-		// Fetch the updated map data to return to client
-		// This also serves as verification that the update was successful
-		const updatedMapFullData = await dbGet( // Using the same query as GET /:mapId for consistency
+		const updatedMapFullData = await dbGet(
 			`SELECT gm.*, a.filepath as asset_filepath 
              FROM game_maps gm 
              JOIN assets a ON gm.map_asset_id = a.id 
@@ -337,7 +326,6 @@ router.put('/:mapId', protect, authorize('DM'), async (req, res) => {
 		);
 
 		if (!updatedMapFullData) {
-			// This case should ideally not be reached if transaction was successful and map existed
 			console.error(`[PUT /api/maps/${mapId}] CRITICAL: Map updated but could not be re-fetched.`);
 			return res.status(500).json({ error: 'Map updated but failed to retrieve new details.' });
 		}
@@ -346,15 +334,11 @@ router.put('/:mapId', protect, authorize('DM'), async (req, res) => {
 			`SELECT t.id, t.name FROM tags t JOIN map_tags mt ON t.id = mt.tag_id WHERE mt.map_id = ? ORDER BY t.name ASC`,
 			[mapId]
 		);
-		// Fog and pins are not modified by this endpoint, so we don't need to re-fetch them unless specifically requested.
-		// For simplicity, we'll return the core updated map + tags.
-		// The client might need to re-fetch full details if it relies on fog/pins being current after this PUT.
 
 		const responsePayload = {
 			...updatedMapFullData,
 			mapAssetUrl: `/uploads/${updatedMapFullData.asset_filepath}`,
 			tags: finalTags || []
-			// If you want to include fog and pins, fetch them here too.
 		};
 		delete responsePayload.asset_filepath;
 
@@ -375,7 +359,6 @@ router.delete('/:mapId', protect, authorize('DM'), async (req, res) => {
 	console.log(`[DELETE /api/maps/${mapId}] User ${dm_id} requesting deletion of map.`);
 
 	try {
-		// Verify map exists and DM owns it before attempting delete
 		const map = await dbGet("SELECT id FROM game_maps WHERE id = ? AND dm_id = ?", [mapId, dm_id]);
 		if (!map) {
 			console.log(`[DELETE /api/maps/${mapId}] Map not found or access denied for user ${dm_id}.`);
@@ -383,15 +366,13 @@ router.delete('/:mapId', protect, authorize('DM'), async (req, res) => {
 		}
 
 		const result = await dbRun("DELETE FROM game_maps WHERE id = ?", [mapId]);
-		// ON DELETE CASCADE in schema should handle related map_fog_data, map_pins, map_tags
 
 		if (result.changes === 0) {
-			// This shouldn't happen if the above check passed, but as a safeguard
 			console.log(`[DELETE /api/maps/${mapId}] Map not found during delete operation (after initial check).`);
 			return res.status(404).json({ error: 'Map not found.' });
 		}
 		console.log(`[DELETE /api/maps/${mapId}] Map successfully deleted. Changes: ${result.changes}`);
-		res.status(200).json({ message: 'Map deleted successfully.' }); // Or 204 No Content
+		res.status(200).json({ message: 'Map deleted successfully.' });
 
 	} catch (error) {
 		console.error(`[DELETE /api/maps/${mapId}] Error:`, error.message, error.stack);
@@ -401,11 +382,10 @@ router.delete('/:mapId', protect, authorize('DM'), async (req, res) => {
 
 
 // --- FOG OF WAR ---
-// PUT /api/maps/:mapId/fog - Update fog data (DM Only)
 router.put('/:mapId/fog', protect, authorize('DM'), async (req, res) => {
 	const { mapId } = req.params;
 	const dm_id = req.user.id;
-	const { fog_data_json } = req.body; // Expects a JSON string of the array of revealed rectangles
+	const { fog_data_json } = req.body;
 
 	console.log(`[PUT /api/maps/${mapId}/fog] User ${dm_id} updating fog. Data length: ${fog_data_json ? fog_data_json.length : 'N/A'}`);
 
@@ -414,7 +394,6 @@ router.put('/:mapId/fog', protect, authorize('DM'), async (req, res) => {
 	}
 
 	try {
-		// Validate if it's valid JSON (specifically an array, though the DB stores it as TEXT)
 		const parsedFog = JSON.parse(fog_data_json);
 		if (!Array.isArray(parsedFog)) {
 			return res.status(400).json({ error: 'fog_data_json must represent a valid JSON array.' });
@@ -425,14 +404,12 @@ router.put('/:mapId/fog', protect, authorize('DM'), async (req, res) => {
 	}
 
 	try {
-		// Verify map exists and DM owns it
 		const map = await dbGet("SELECT id FROM game_maps WHERE id = ? AND dm_id = ?", [mapId, dm_id]);
 		if (!map) {
 			console.log(`[PUT /api/maps/${mapId}/fog] Map not found or access denied for user ${dm_id}.`);
 			return res.status(404).json({ error: 'Map not found or unauthorized to update fog.' });
 		}
 
-		// Update or Insert fog data. map_fog_data has map_id as PK.
 		const sql = `
             INSERT INTO map_fog_data (map_id, fog_data_json, updated_at) 
             VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -453,43 +430,33 @@ router.put('/:mapId/fog', protect, authorize('DM'), async (req, res) => {
 
 // --- MAP ELEMENTS (Replaces PINS routes) ---
 
-// POST /api/maps/:mapId/elements - Create a new map element
 router.post('/:mapId/elements', protect, authorize('DM'), async (req, res) => {
 	const { mapId } = req.params;
 	const dm_id = req.user.id;
 	const {
 		element_type,
 		x_coord_percent, y_coord_percent,
-		width_percent, height_percent, // Optional
+		width_percent, height_percent,
 		label = '',
 		description = '',
 		is_visible_to_players = false,
-		element_data = {} // Expects a JSON object specific to the element_type
+		element_data = {}
 	} = req.body;
 
 	console.log(`[POST /api/maps/${mapId}/elements] User ${dm_id} creating element. Type: ${element_type}, Coords: (${x_coord_percent}, ${y_coord_percent}) Label: ${label}`);
 
-	// --- Validations ---
-	if (!element_type || !['pin', 'text', 'area'].includes(element_type)) { // Extend with more types
+	if (!element_type || !['pin', 'text', 'area'].includes(element_type)) {
 		return res.status(400).json({ error: 'Valid element_type is required.' });
 	}
 	if (x_coord_percent === undefined || typeof x_coord_percent !== 'number' || x_coord_percent < 0 || x_coord_percent > 1 ||
 		y_coord_percent === undefined || typeof y_coord_percent !== 'number' || y_coord_percent < 0 || y_coord_percent > 1) {
 		return res.status(400).json({ error: 'Coordinates (x_coord_percent, y_coord_percent) must be numbers between 0.0 and 1.0.' });
 	}
-	// Add validation for element_data based on element_type
 	if (element_type === 'pin') {
 		if (!element_data.icon || typeof element_data.icon !== 'string') {
 			return res.status(400).json({ error: 'Pin element_data requires an "icon" string.' });
 		}
-		// element_data.color could be optional with a default
-	} else if (element_type === 'text') {
-		if (!element_data.content || typeof element_data.content !== 'string') {
-			// For Tiptap, content is often HTML. You might allow empty initially.
-			// return res.status(400).json({ error: 'Text element_data requires "content" string.' });
-		}
 	}
-	// --- End Validations ---
 
 	try {
 		const map = await dbGet("SELECT id FROM game_maps WHERE id = ? AND dm_id = ?", [mapId, dm_id]);
@@ -511,11 +478,9 @@ router.post('/:mapId/elements', protect, authorize('DM'), async (req, res) => {
 		if (!newElementData) {
 			return res.status(500).json({ error: 'Element created but failed to retrieve details.' });
 		}
-		// Parse element_data back to JSON for the response
 		if (newElementData.element_data) {
 			newElementData.element_data = JSON.parse(newElementData.element_data);
 		}
-
 
 		res.status(201).json(newElementData);
 	} catch (error) {
@@ -524,11 +489,10 @@ router.post('/:mapId/elements', protect, authorize('DM'), async (req, res) => {
 	}
 });
 
-// GET /api/maps/:mapId/elements - Get all elements for a specific map (DM access)
 router.get('/:mapId/elements', protect, authorize('DM'), async (req, res) => {
 	const { mapId } = req.params;
 	const dm_id = req.user.id;
-	const { type } = req.query; // Optional filter by element_type
+	const { type } = req.query;
 
 	console.log(`[GET /api/maps/${mapId}/elements] User ${dm_id} requesting elements. Type filter: ${type || 'All'}`);
 
@@ -548,7 +512,6 @@ router.get('/:mapId/elements', protect, authorize('DM'), async (req, res) => {
 		elementsSql += " ORDER BY created_at ASC";
 
 		const elements = await dbAll(elementsSql, queryParams);
-		// Parse element_data for each element
 		const processedElements = elements.map(el => ({
 			...el,
 			element_data: el.element_data ? JSON.parse(el.element_data) : {}
@@ -562,7 +525,6 @@ router.get('/:mapId/elements', protect, authorize('DM'), async (req, res) => {
 	}
 });
 
-// PUT /api/maps/:mapId/elements/:elementId - Update a specific element
 router.put('/:mapId/elements/:elementId', protect, authorize('DM'), async (req, res) => {
 	const { mapId, elementId } = req.params;
 	const dm_id = req.user.id;
@@ -571,7 +533,7 @@ router.put('/:mapId/elements/:elementId', protect, authorize('DM'), async (req, 
 		width_percent, height_percent,
 		label, description,
 		is_visible_to_players,
-		element_data // Full new element_data object
+		element_data
 	} = req.body;
 
 	console.log(`[PUT /api/maps/${mapId}/elements/${elementId}] User ${dm_id} updating element. Body:`, req.body);
@@ -579,7 +541,6 @@ router.put('/:mapId/elements/:elementId', protect, authorize('DM'), async (req, 
 	if (Object.keys(req.body).length === 0) {
 		return res.status(400).json({ error: "No update data provided." });
 	}
-	// Add specific validations as needed (e.g., coordinate ranges)
 
 	try {
 		const map = await dbGet("SELECT id FROM game_maps WHERE id = ? AND dm_id = ?", [mapId, dm_id]);
@@ -595,13 +556,12 @@ router.put('/:mapId/elements/:elementId', protect, authorize('DM'), async (req, 
 		const updateFields = {};
 		if (x_coord_percent !== undefined) updateFields.x_coord_percent = x_coord_percent;
 		if (y_coord_percent !== undefined) updateFields.y_coord_percent = y_coord_percent;
-		if (width_percent !== undefined) updateFields.width_percent = width_percent; else if (req.body.hasOwnProperty('width_percent') && width_percent === null) updateFields.width_percent = null; // Allow setting to null
-		if (height_percent !== undefined) updateFields.height_percent = height_percent; else if (req.body.hasOwnProperty('height_percent') && height_percent === null) updateFields.height_percent = null; // Allow setting to null
+		if (width_percent !== undefined) updateFields.width_percent = width_percent; else if (req.body.hasOwnProperty('width_percent') && width_percent === null) updateFields.width_percent = null;
+		if (height_percent !== undefined) updateFields.height_percent = height_percent; else if (req.body.hasOwnProperty('height_percent') && height_percent === null) updateFields.height_percent = null;
 		if (label !== undefined) updateFields.label = label;
 		if (description !== undefined) updateFields.description = description;
 		if (is_visible_to_players !== undefined) updateFields.is_visible_to_players = Number(is_visible_to_players);
 		if (element_data !== undefined) updateFields.element_data = JSON.stringify(element_data);
-		// Note: element_type is generally not updatable once created.
 
 		if (Object.keys(updateFields).length === 0) {
 			return res.status(400).json({ error: 'No valid fields provided for update.' });
@@ -625,7 +585,6 @@ router.put('/:mapId/elements/:elementId', protect, authorize('DM'), async (req, 
 	}
 });
 
-// DELETE /api/maps/:mapId/elements/:elementId - Delete an element
 router.delete('/:mapId/elements/:elementId', protect, authorize('DM'), async (req, res) => {
 	const { mapId, elementId } = req.params;
 	const dm_id = req.user.id;
